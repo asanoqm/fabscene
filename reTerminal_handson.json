@@ -1,0 +1,394 @@
+[
+    {
+        "id": "4a1f1cd614855c7e",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "b24dc5005fb6542b",
+        "type": "inject",
+        "z": "4a1f1cd614855c7e",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "1",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 110,
+        "y": 40,
+        "wires": [
+            [
+                "303122ed29ca6a62",
+                "b65c1a84909d00df",
+                "5bf0b92506ddf041"
+            ]
+        ]
+    },
+    {
+        "id": "303122ed29ca6a62",
+        "type": "Bme280",
+        "z": "4a1f1cd614855c7e",
+        "name": "",
+        "bus": "1",
+        "address": "0x76",
+        "topic": "bme280",
+        "extra": true,
+        "preasure": 1013.25,
+        "x": 120,
+        "y": 100,
+        "wires": [
+            [
+                "54f9f85834bd16ba"
+            ]
+        ]
+    },
+    {
+        "id": "54f9f85834bd16ba",
+        "type": "function",
+        "z": "4a1f1cd614855c7e",
+        "name": " round",
+        "func": "msg.payload.temperature_C = Number(msg.payload.temperature_C.toFixed(1));\nmsg.payload.humidity = Number(msg.payload.humidity.toFixed(1));\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 270,
+        "y": 100,
+        "wires": [
+            [
+                "fcdd55b328d6e32e",
+                "e570084512a87e61"
+            ]
+        ]
+    },
+    {
+        "id": "4e1d1412dc09ecf3",
+        "type": "debug",
+        "z": "4a1f1cd614855c7e",
+        "name": "TEMP",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 670,
+        "y": 100,
+        "wires": []
+    },
+    {
+        "id": "b65c1a84909d00df",
+        "type": "exec",
+        "z": "4a1f1cd614855c7e",
+        "command": "python3 mcp1.py",
+        "addpay": "",
+        "append": "",
+        "useSpawn": "false",
+        "timer": "",
+        "winHide": false,
+        "oldrc": false,
+        "name": "",
+        "x": 470,
+        "y": 260,
+        "wires": [
+            [
+                "c983ea24f8f8185f",
+                "a4bceedb068df62d"
+            ],
+            [],
+            []
+        ]
+    },
+    {
+        "id": "c983ea24f8f8185f",
+        "type": "debug",
+        "z": "4a1f1cd614855c7e",
+        "name": " MOIST",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 680,
+        "y": 260,
+        "wires": []
+    },
+    {
+        "id": "fcdd55b328d6e32e",
+        "type": "change",
+        "z": "4a1f1cd614855c7e",
+        "name": " BME280 TEMP",
+        "rules": [
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "payload.temperature_C",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 460,
+        "y": 100,
+        "wires": [
+            [
+                "4e1d1412dc09ecf3",
+                "9390892de0df3255"
+            ]
+        ]
+    },
+    {
+        "id": "e570084512a87e61",
+        "type": "change",
+        "z": "4a1f1cd614855c7e",
+        "name": "BME280   HUMID",
+        "rules": [
+            {
+                "t": "set",
+                "p": "payload",
+                "pt": "msg",
+                "to": "payload.humidity",
+                "tot": "msg"
+            }
+        ],
+        "action": "",
+        "property": "",
+        "from": "",
+        "to": "",
+        "reg": false,
+        "x": 460,
+        "y": 180,
+        "wires": [
+            [
+                "7c02f569de2ab0f2",
+                "63f0fd1b2ffa2c47"
+            ]
+        ]
+    },
+    {
+        "id": "7c02f569de2ab0f2",
+        "type": "debug",
+        "z": "4a1f1cd614855c7e",
+        "name": "HUMID",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 680,
+        "y": 180,
+        "wires": []
+    },
+    {
+        "id": "9390892de0df3255",
+        "type": "ui_text",
+        "z": "4a1f1cd614855c7e",
+        "group": "57eb7287d407f73f",
+        "order": 3,
+        "width": 0,
+        "height": 0,
+        "name": "TEMP",
+        "label": "Temperature",
+        "format": "{{msg.payload}}",
+        "layout": "col-center",
+        "className": "",
+        "style": true,
+        "font": "",
+        "fontSize": "25",
+        "color": "#000000",
+        "x": 670,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "63f0fd1b2ffa2c47",
+        "type": "ui_text",
+        "z": "4a1f1cd614855c7e",
+        "group": "57eb7287d407f73f",
+        "order": 5,
+        "width": 0,
+        "height": 0,
+        "name": "HUMID",
+        "label": "Humidity",
+        "format": "{{msg.payload}}",
+        "layout": "col-center",
+        "className": "",
+        "style": true,
+        "font": "",
+        "fontSize": "25",
+        "color": "#000000",
+        "x": 680,
+        "y": 220,
+        "wires": []
+    },
+    {
+        "id": "a4bceedb068df62d",
+        "type": "ui_gauge",
+        "z": "4a1f1cd614855c7e",
+        "name": "",
+        "group": "65beb2c7d007f6e6",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "MOISTURE",
+        "label": "units",
+        "format": "{{value}}",
+        "min": 0,
+        "max": " 1024",
+        "colors": [
+            "#b30000",
+            "#e6e600",
+            "#43cb3a"
+        ],
+        "seg1": "300",
+        "seg2": "600",
+        "diff": false,
+        "className": "",
+        "x": 690,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "5bf0b92506ddf041",
+        "type": "moment",
+        "z": "4a1f1cd614855c7e",
+        "name": "",
+        "topic": "",
+        "input": "",
+        "inputType": "date",
+        "inTz": "Asia/Tokyo",
+        "adjAmount": 0,
+        "adjType": "days",
+        "adjDir": "add",
+        "format": "MM/DD HH:mm",
+        "locale": "ja-JP",
+        "output": "payload",
+        "outputType": "msg",
+        "outTz": "Asia/Tokyo",
+        "x": 160,
+        "y": 353,
+        "wires": [
+            [
+                "bad0b74ed39e28cb",
+                "3847fb1d1f4a948e"
+            ]
+        ]
+    },
+    {
+        "id": "bad0b74ed39e28cb",
+        "type": "debug",
+        "z": "4a1f1cd614855c7e",
+        "name": " TIME",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 670,
+        "y": 340,
+        "wires": []
+    },
+    {
+        "id": "3847fb1d1f4a948e",
+        "type": "ui_text",
+        "z": "4a1f1cd614855c7e",
+        "group": "57eb7287d407f73f",
+        "order": 1,
+        "width": 0,
+        "height": 0,
+        "name": "TIME",
+        "label": "",
+        "format": "{{msg.payload}}",
+        "layout": "col-center",
+        "className": "",
+        "style": true,
+        "font": "",
+        "fontSize": "40",
+        "color": "#0055ff",
+        "x": 670,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "3356573bb6385618",
+        "type": "ui_spacer",
+        "z": "4a1f1cd614855c7e",
+        "name": "spacer",
+        "group": "57eb7287d407f73f",
+        "order": 2,
+        "width": 10,
+        "height": 1
+    },
+    {
+        "id": "f2e824a0a61699fd",
+        "type": "ui_spacer",
+        "z": "4a1f1cd614855c7e",
+        "name": "spacer",
+        "group": "57eb7287d407f73f",
+        "order": 4,
+        "width": 10,
+        "height": 1
+    },
+    {
+        "id": "57eb7287d407f73f",
+        "type": "ui_group",
+        "name": "Date",
+        "tab": "9afcb4980f658a35",
+        "order": 1,
+        "disp": true,
+        "width": 10,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "65beb2c7d007f6e6",
+        "type": "ui_group",
+        "name": "Watering Sign",
+        "tab": "9afcb4980f658a35",
+        "order": 2,
+        "disp": true,
+        "width": 10,
+        "collapse": false,
+        "className": ""
+    },
+    {
+        "id": "9afcb4980f658a35",
+        "type": "ui_tab",
+        "name": " Plants Watcher",
+        "icon": "dashboard",
+        "disabled": false,
+        "hidden": false
+    }
+]
