@@ -67,7 +67,7 @@ void setup() {
   if (!WioNetwork.waitUntilCommunicationAvailable(NETWORK_TIMEOUT)) abort();
 
   // Groveの電源を投入, 通信開始
-  digitalWrite(PIN_VGROVE_ENABLE, LOW);
+  digitalWrite(PIN_VGROVE_ENABLE, VGROVE_ENABLE_ON); 
   Wire.begin();
 
   digitalWrite(LED_BUILTIN, LOW);
