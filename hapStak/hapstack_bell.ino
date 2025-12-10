@@ -9,7 +9,7 @@
 
 const int WAV_HEADER_SIZE = 44;  // 標準PCM WAVのヘッダサイズ
 extern const unsigned char audio[];
-const size_t AUDIO_SIZE = 111630;  // gun.cのサイズ
+const size_t AUDIO_SIZE = 111630;  // bell.cのサイズ
 const size_t PCM_SIZE   = AUDIO_SIZE - WAV_HEADER_SIZE;
 
 bool InitI2SSpaker()
