@@ -1,0 +1,154 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h> // JSONの処理に活用
+
+const char* ssid = "SSID";
+const char* password = "PASS";
+const char* RSS_URL = "https://news.yahoo.co.jp/rss/topics/top-picks.xml";
+const char* openai_api_key = "API_KEY"; // openAIのAPIキーを利用
+
+static const int N = 5;  // 上位N件からランダムに1件
+
+String fetchRandomItemTitle(const char* url, int limitN) {
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient https;
+  if (!https.begin(client, url)) return "BEGIN_FAIL";
+
+  int code = https.GET();
+  if (code != 200) {
+    https.end();
+    return "HTTP_" + String(code);
+  }
+
+  WiFiClient* s = https.getStreamPtr();
+  String buf;
+
+  int seen = 0;
+  String picked = "NO_ITEM";
+
+  while (https.connected() && seen < limitN) {
+    while (s->available() && seen < limitN) {
+      buf += (char)s->read();
+
+      int itemPos = buf.indexOf("<item>");
+      if (itemPos >= 0) {
+        int t1 = buf.indexOf("<title>", itemPos);
+        int t2 = (t1 >= 0) ? buf.indexOf("</title>", t1 + 7) : -1;
+
+        if (t1 >= 0 && t2 >= 0) {
+          String title = buf.substring(t1 + 7, t2);
+          title.trim();
+
+          seen++;
+          if (random(seen) == 0) picked = title;  // 1/seen で入れ替え
+          buf = buf.substring(t2 + 8);            // 進める
+        }
+      }
+      if (buf.length() > 4096) buf.remove(0, buf.length() - 1024);
+    }
+    delay(1);
+  }
+  https.end();
+  return picked;
+}
+
+
+// Json Escape
+String jsonEscape(String s) {
+  s.replace("\\", "\\\\");
+  s.replace("\"", "\\\"");
+  s.replace("\n", "\\n");
+  s.replace("\r", "\\r");
+  return s;
+}
+
+// Open AI parse
+String parseResponsesOutputText(const String& json) {
+  DynamicJsonDocument doc(12 * 1024);
+  if (deserializeJson(doc, json)) return "";
+
+  JsonVariant out = doc["output"];
+  if (!out.is<JsonArray>()) return "";
+
+  for (JsonObject item : out.as<JsonArray>()) {
+    JsonVariant content = item["content"];
+    if (!content.is<JsonArray>()) continue;
+
+    for (JsonObject c : content.as<JsonArray>()) {
+      const char* type = c["type"] | "";
+      const char* text = c["text"] | "";
+      if (strcmp(type, "output_text") == 0 && text[0]) return String(text);
+      if (text[0]) return String(text);  // 保険
+    }
+  }
+  return "";
+}
+
+
+// OpenAI: 見出し -> 半角ｶﾅ1行 追加
+String convertToHalfKana(const String& headline) {
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient https;
+  https.setTimeout(30000);
+
+  if (!https.begin(client, "https://api.openai.com/v1/responses")) {
+    return "OAI_BEGIN_FAIL";
+  }
+
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("Authorization", String("Bearer ") + openai_api_key);
+
+  String prompt =
+    "次のニュース見出しを、読み仮名の半角ｶﾅに変換せよ。\n"
+    "出力は1行のみ。説明・引用符・前置きは禁止。\n"
+    "使ってよいのは ASCII と 半角ｶﾅ と半角スペースのみ。\n"
+    "全角文字（カタカナ/ひらがな/漢字/、。・ー/全角数字）は禁止。\n"
+    "見出し: "
+    + headline;
+
+  String payload = "{"
+                   "\"model\":\"gpt-4.1-mini\","
+                   "\"temperature\":0,"
+                   "\"max_output_tokens\":80,"
+                   "\"input\":\""
+                   + jsonEscape(prompt) + "\""
+                                          "}";
+
+  int code = https.POST(payload);
+  String res = https.getString();
+  https.end();
+
+  if (code != 200) return "OAI_HTTP_" + String(code);
+
+  String out = parseResponsesOutputText(res);
+  out.trim();
+  int nl = out.indexOf('\n');
+  if (nl >= 0) out = out.substring(0, nl);
+  out.trim();
+
+  return out.length() ? out : "PARSE_FAIL";
+}
+
+
+void setup() {
+  Serial.begin(115200);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) delay(300);
+  randomSeed(millis());
+  //Serial.println(fetchRandomItemTitle(RSS_URL, N));
+  String headline = fetchRandomItemTitle(RSS_URL, N);
+  Serial.println("HEADLINE:");
+  Serial.println(headline);
+
+  String yomi = convertToHalfKana(headline);
+  Serial.println("YOMI:");
+  Serial.println(yomi);
+}
+
+void loop() {}
