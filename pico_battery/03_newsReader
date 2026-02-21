@@ -1,0 +1,353 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include "rgb_lcd.h"
+#include <time.h>
+
+// ======================
+// Config
+// ======================
+const char* ssid     = "SSID";
+const char* password = "PASS";
+const char* RSS_URL  = "https://news.yahoo.co.jp/rss/topics/top-picks.xml";
+const char* openai_api_key = "API_KEY"; // ←secret.h等へ（直書きしない）
+
+static const int N = 5;
+
+// 半角ｶﾅ(U+FF61..U+FF9F) → LCDコード基点（ズレたら 0xA0 / 0xA2 も試す）
+static const uint8_t KANA_BASE = 0xA1;
+
+rgb_lcd lcd;
+
+// 2行目ニュース（起動時に確定、スクロール対象）
+String g_yomi;
+int    g_yomiChars = 0; // ★UTF-8コードポイント数（スクロール終端判定用）
+
+// ======================
+// NTP
+// ======================
+void syncTime() {
+  configTime(0, 0, "ntp.nict.jp", "pool.ntp.org"); // UTC取得
+  for (int i = 0; i < 30; i++) {
+    if (time(nullptr) > 1700000000) return; // 2023年以降ならOK
+    delay(200);
+  }
+}
+
+String buildTimeString() {
+  time_t now = time(nullptr) + 9 * 3600; // JST
+  struct tm t;
+  gmtime_r(&now, &t);
+
+  char buf[17];
+  // 16文字ピッタリ: "YYYY/MM/DD HH:MM"
+  snprintf(buf, sizeof(buf),
+           "%04d/%02d/%02d %02d:%02d",
+           t.tm_year + 1900,
+           t.tm_mon + 1,
+           t.tm_mday,
+           t.tm_hour,
+           t.tm_min);
+
+  return String(buf);
+}
+
+// ======================
+// RSS: 上位N件からランダムに1件タイトル
+// ======================
+String fetchRandomItemTitle(const char* url, int limitN) {
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient https;
+  if (!https.begin(client, url)) return "";
+
+  if (https.GET() != 200) {
+    https.end();
+    return "";
+  }
+
+  WiFiClient* s = https.getStreamPtr();
+  String buf;
+
+  int seen = 0;
+  String picked;
+
+  while (https.connected() && seen < limitN) {
+    while (s->available() && seen < limitN) {
+      buf += (char)s->read();
+
+      int itemPos = buf.indexOf("<item>");
+      if (itemPos >= 0) {
+        int t1 = buf.indexOf("<title>", itemPos);
+        int t2 = (t1 >= 0) ? buf.indexOf("</title>", t1 + 7) : -1;
+
+        if (t1 >= 0 && t2 >= 0) {
+          String title = buf.substring(t1 + 7, t2);
+          title.trim();
+
+          seen++;
+          if (random(seen) == 0) picked = title; // 1/seen で入れ替え
+          buf = buf.substring(t2 + 8);          // 進める
+        }
+      }
+
+      if (buf.length() > 4096) buf.remove(0, buf.length() - 1024);
+    }
+  }
+
+  https.end();
+  return picked;
+}
+
+// ======================
+// OpenAI helpers
+// ======================
+String jsonEscape(String s) {
+  s.replace("\\", "\\\\");
+  s.replace("\"", "\\\"");
+  s.replace("\n", "\\n");
+  s.replace("\r", "\\r");
+  return s;
+}
+
+String parseResponsesOutputText(const String& json) {
+  DynamicJsonDocument doc(12 * 1024);
+  if (deserializeJson(doc, json)) return "";
+
+  JsonVariant out = doc["output"];
+  if (!out.is<JsonArray>()) return "";
+
+  for (JsonObject item : out.as<JsonArray>()) {
+    JsonVariant content = item["content"];
+    if (!content.is<JsonArray>()) continue;
+
+    for (JsonObject c : content.as<JsonArray>()) {
+      const char* text = c["text"] | "";
+      if (text[0]) return String(text);
+    }
+  }
+  return "";
+}
+
+String convertToHalfKana(const String& headline) {
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient https;
+  https.setTimeout(30000);
+
+  if (!https.begin(client, "https://api.openai.com/v1/responses")) return "";
+
+  https.addHeader("Content-Type", "application/json");
+  https.addHeader("Authorization", String("Bearer ") + openai_api_key);
+
+  String prompt =
+    "次のニュース見出しを、読み仮名の半角ｶﾅに変換せよ。\n"
+    "出力は1行のみ。説明・引用符・前置きは禁止。\n"
+    "使ってよいのは ASCII と 半角ｶﾅ と半角スペースのみ。\n"
+    "全角文字（カタカナ/ひらがな/漢字/、。・ー/全角数字）は禁止。\n"
+    "見出し: " + headline;
+
+  String payload = "{"
+    "\"model\":\"gpt-4.1-mini\","
+    "\"temperature\":0,"
+    "\"max_output_tokens\":80,"
+    "\"input\":\"" + jsonEscape(prompt) + "\""
+  "}";
+
+  int code = https.POST(payload);
+  String res = https.getString();
+  https.end();
+
+  if (code != 200) return "";
+
+  String out = parseResponsesOutputText(res);
+  out.trim();
+  int nl = out.indexOf('\n');
+  if (nl >= 0) out = out.substring(0, nl);
+  out.trim();
+  return out;
+}
+
+// ======================
+// UTF-8 decode + LCD write (ASCII / 半角ｶﾅ)
+// ======================
+bool utf8Next(const String& s, int& i, uint32_t& cp) {
+  if (i >= (int)s.length()) return false;
+  uint8_t c = (uint8_t)s[i++];
+
+  if (c < 0x80) { cp = c; return true; }
+
+  if ((c & 0xE0) == 0xC0) {
+    if (i >= (int)s.length()) return false;
+    uint8_t c2 = (uint8_t)s[i++];
+    cp = ((c & 0x1F) << 6) | (c2 & 0x3F);
+    return true;
+  }
+
+  if ((c & 0xF0) == 0xE0) {
+    if (i + 1 >= (int)s.length()) return false;
+    uint8_t c2 = (uint8_t)s[i++];
+    uint8_t c3 = (uint8_t)s[i++];
+    cp = ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+    return true;
+  }
+
+  return false; // 4bytes未対応
+}
+
+void lcdWriteCp(uint32_t cp) {
+  if (cp <= 0x7F) { lcd.write((uint8_t)cp); return; }
+
+  if (cp >= 0xFF61 && cp <= 0xFF9F) {
+    lcd.write((uint8_t)(KANA_BASE + (cp - 0xFF61)));
+    return;
+  }
+
+  lcd.write((uint8_t)' ');
+}
+
+int utf8CharCount(const String& s) {
+  int i = 0, count = 0;
+  uint32_t cp;
+  while (utf8Next(s, i, cp)) count++;
+  return count;
+}
+
+int utf8BytePosOfCharIndex(const String& s, int charIndex) {
+  int i = 0, count = 0;
+  uint32_t cp;
+  while (i < (int)s.length() && count < charIndex) {
+    if (!utf8Next(s, i, cp)) break;
+    count++;
+  }
+  return i;
+}
+
+// 2行目に「startChar」文字目から16文字表示（足りない分は空白）
+void lcdPrintLine2FromChar(const String& s, int startChar) {
+  int bytePos = utf8BytePosOfCharIndex(s, startChar);
+
+  lcd.setCursor(0, 1);
+
+  int printed = 0;
+  int i = bytePos;
+  while (printed < 16 && i < (int)s.length()) {
+    int j = i;
+    uint32_t cp;
+    if (!utf8Next(s, j, cp)) break;
+    lcdWriteCp(cp);
+    i = j;
+    printed++;
+  }
+  while (printed < 16) {
+    lcd.write((uint8_t)' ');
+    printed++;
+  }
+}
+
+// ======================
+// Scroll: hold -> scroll -> hold -> reset
+// ======================
+int scrollOffset = 0;              // char index
+unsigned long lastScrollMs = 0;
+unsigned long phaseStartMs = 0;
+int scrollPhase = 0;               // 0=holdStart,1=scroll,2=holdEnd
+
+void tickScrollLine2() {
+  if (g_yomiChars <= 16) return;
+
+  const uint32_t HOLD_START_MS = 2500;
+  const uint32_t STEP_MS       = 500;
+  const uint32_t HOLD_END_MS   = 1500;
+
+  unsigned long nowMs = millis();
+
+  if (scrollPhase == 0) {
+    if (nowMs - phaseStartMs >= HOLD_START_MS) {
+      scrollPhase = 1;
+      lastScrollMs = 0;
+    }
+    return;
+  }
+
+  if (scrollPhase == 1) {
+    if (lastScrollMs == 0 || nowMs - lastScrollMs >= STEP_MS) {
+      lcdPrintLine2FromChar(g_yomi, scrollOffset);
+      scrollOffset++;
+      lastScrollMs = nowMs;
+
+      // ★修正点：バイト長ではなく「文字数」で終端判定
+      if (scrollOffset >= (g_yomiChars - 15)) {
+        scrollPhase = 2;
+        phaseStartMs = nowMs;
+      }
+    }
+    return;
+  }
+
+  if (scrollPhase == 2) {
+    if (nowMs - phaseStartMs >= HOLD_END_MS) {
+      scrollOffset = 0;
+      scrollPhase = 0;
+      phaseStartMs = nowMs;
+      lcdPrintLine2FromChar(g_yomi, 0);
+    }
+    return;
+  }
+}
+
+// ======================
+// setup / loop
+// ======================
+void setup() {
+  Serial.begin(115200);
+
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Now Loading...");
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) delay(300);
+
+  syncTime();
+  randomSeed(millis());
+
+  String headline = fetchRandomItemTitle(RSS_URL, N);
+  g_yomi = convertToHalfKana(headline);
+  g_yomi.trim();
+
+  // 文字数（コードポイント数）をキャッシュ
+  g_yomiChars = utf8CharCount(g_yomi);
+
+  lcd.begin(16, 2);
+  lcd.clear();
+
+  lcd.setCursor(0, 0);
+  lcd.print(buildTimeString());
+
+  lcdPrintLine2FromChar(g_yomi, 0);
+
+  phaseStartMs = millis();
+}
+
+void loop() {
+  // 1行目：分が変わったら更新（美しい版）
+  static int lastMinute = -1;
+
+  time_t now = time(nullptr) + 9 * 3600; // JST
+  struct tm t;
+  gmtime_r(&now, &t);
+
+  if (t.tm_min != lastMinute) {
+    lastMinute = t.tm_min;
+    lcd.setCursor(0, 0);
+    lcd.print(buildTimeString());
+  }
+
+  // 2行目：停止→スクロール→停止→先頭へ
+  tickScrollLine2();
+}
